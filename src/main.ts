@@ -316,7 +316,7 @@ function renderSidebar(activeId: string): string {
   return `
     <aside class="sidebar" id="sidebar-navigation" aria-label="Document navigation">
       <button class="brand" data-doc="home" aria-label="Open dashboard">
-        <span class="brand-mark">N<span></span></span>
+        <img class="brand-mark" src="./noah-logo.png" alt="" width="42" height="42" decoding="async" />
         <span class="brand-copy"><strong>Noah</strong><small>Business home base</small></span>
       </button>
 
