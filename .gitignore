@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Local execution and product repository
+.omc/
+noah/
+
+# Team-confidential and internal-sensitive home-base material
+OPEN-QUESTIONS.md
+business/identity/user-personas.md
+business/strategy/
+business/ops/
+business/voice/
+marketing/gtm-plan.md
+team/
