@@ -53,6 +53,8 @@ const documentById = new Map(documents.map((document) => [document.id, document]
 const openDecisions = extractOpenDecisions(documents);
 let reviews = loadReviews();
 let tocObserver: IntersectionObserver | null = null;
+const mobileNavigationQuery = window.matchMedia('(max-width: 900px)');
+const unsavedReviewIds = new Set<string>();
 
 marked.setOptions({
   gfm: true,
@@ -109,7 +111,7 @@ function markdownToPlainText(markdown: string): string {
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/[#>*_|~\-]+/g, ' ')
+    .replace(/[#>*_|~]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -164,11 +166,12 @@ function loadReviews(): Record<string, ReviewEntry> {
   }
 }
 
-function persistReviews(): void {
+function persistReviews(): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(reviews));
+    return true;
   } catch {
-    showToast('This browser could not save the review');
+    return false;
   }
 }
 
@@ -244,6 +247,7 @@ function render(): void {
   const currentDocument = route === 'home' ? null : documentById.get(route) ?? null;
   window.document.title = currentDocument ? `${currentDocument.title} — Noah Home Base` : 'Noah Business Home Base';
   app.innerHTML = renderShell(currentDocument);
+  syncMobileNavigation(false, false);
 
   if (currentDocument) enhanceDocumentPage(currentDocument);
 
@@ -253,11 +257,44 @@ function render(): void {
     else window.scrollTo({ top: 0, behavior: 'instant' });
   });
 }
+function syncMobileNavigation(open: boolean, restoreFocus: boolean): void {
+  const sidebar = document.querySelector<HTMLElement>('#sidebar-navigation');
+  const trigger = document.querySelector<HTMLButtonElement>('.mobile-menu');
+  const pageColumn = document.querySelector<HTMLElement>('.page-column');
+  const skipLink = document.querySelector<HTMLElement>('.skip-link');
+  if (!sidebar || !trigger || !pageColumn || !skipLink) return;
+
+  const shouldOpen = mobileNavigationQuery.matches && open;
+  document.body.classList.toggle('menu-open', shouldOpen);
+  trigger.setAttribute('aria-expanded', String(shouldOpen));
+  trigger.setAttribute('aria-label', shouldOpen ? 'Close navigation' : 'Open navigation');
+
+  if (mobileNavigationQuery.matches) {
+    sidebar.inert = !shouldOpen;
+    sidebar.setAttribute('aria-hidden', String(!shouldOpen));
+  } else {
+    sidebar.inert = false;
+    sidebar.removeAttribute('aria-hidden');
+  }
+
+  pageColumn.inert = shouldOpen;
+  skipLink.inert = shouldOpen;
+  if (shouldOpen) {
+    pageColumn.setAttribute('aria-hidden', 'true');
+    skipLink.setAttribute('aria-hidden', 'true');
+    requestAnimationFrame(() => sidebar.querySelector<HTMLElement>('[data-doc="home"]')?.focus());
+  } else {
+    pageColumn.removeAttribute('aria-hidden');
+    skipLink.removeAttribute('aria-hidden');
+    if (restoreFocus) trigger.focus();
+  }
+}
 
 
 function renderShell(document: ParsedDocument | null): string {
   return `
     <div class="site-shell">
+      <a class="skip-link" href="#main-content">Skip to main content</a>
       <div class="mobile-scrim" data-action="toggle-menu" aria-hidden="true"></div>
       ${renderSidebar(document?.id ?? 'home')}
       <div class="page-column">
@@ -277,16 +314,16 @@ function renderSidebar(activeId: string): string {
   const groups: Array<'Home' | 'Identity' | 'Market'> = ['Home', 'Identity', 'Market'];
 
   return `
-    <aside class="sidebar" aria-label="Document navigation">
-      <div class="brand" data-doc="home" role="button" tabindex="0" aria-label="Open dashboard">
+    <aside class="sidebar" id="sidebar-navigation" aria-label="Document navigation">
+      <button class="brand" data-doc="home" aria-label="Open dashboard">
         <span class="brand-mark">N<span></span></span>
         <span class="brand-copy"><strong>Noah</strong><small>Business home base</small></span>
-      </div>
+      </button>
 
       <nav class="sidebar-nav">
         <div class="nav-group">
           <p class="nav-label">Workspace</p>
-          <button class="nav-item ${activeId === 'home' ? 'is-active' : ''}" data-doc="home">
+          <button class="nav-item ${activeId === 'home' ? 'is-active' : ''}" data-doc="home" ${activeId === 'home' ? 'aria-current="page"' : ''}>
             <span class="nav-icon">${icon('home')}</span>
             <span>Review dashboard</span>
           </button>
@@ -302,7 +339,7 @@ function renderSidebar(activeId: string): string {
                   .map((document) => {
                     const review = getReview(document.id);
                     return `
-                      <button class="nav-item ${activeId === document.id ? 'is-active' : ''}" data-doc="${document.id}">
+                      <button class="nav-item ${activeId === document.id ? 'is-active' : ''}" data-doc="${document.id}" ${activeId === document.id ? 'aria-current="page"' : ''}>
                         <span class="nav-icon">${icon('file')}</span>
                         <span class="nav-text">${escapeHtml(document.shortTitle)}</span>
                         <span class="review-dot ${statusMeta[review.status].className}" title="${statusMeta[review.status].label}"></span>
@@ -329,7 +366,7 @@ function renderTopbar(document: ParsedDocument | null): string {
   return `
     <header class="topbar">
       <div class="topbar-left">
-        <button class="icon-button mobile-menu" data-action="toggle-menu" aria-label="Open navigation">${icon('menu')}</button>
+        <button class="icon-button mobile-menu" data-action="toggle-menu" aria-label="Open navigation" aria-controls="sidebar-navigation" aria-expanded="false">${icon('menu')}</button>
         <div class="breadcrumb">
           <button data-doc="home">Home base</button>
           ${document ? `<span>/</span><strong>${escapeHtml(document.shortTitle)}</strong>` : ''}
@@ -425,7 +462,7 @@ function renderDocumentCard(document: ParsedDocument): string {
   const blockerCount = Array.isArray(blockers) ? blockers.length : 0;
 
   return `
-    <article class="document-card accent-${document.accent}" data-doc="${document.id}" tabindex="0">
+    <a class="document-card accent-${document.accent}" href="?doc=${document.id}" data-doc="${document.id}">
       <div class="card-topline">
         <span>${escapeHtml(document.group)}</span>
         <span class="review-pill ${statusMeta[review.status].className}">${statusMeta[review.status].shortLabel}</span>
@@ -437,7 +474,7 @@ function renderDocumentCard(document: ParsedDocument): string {
         <span>${blockerCount ? `${blockerCount} open ${blockerCount === 1 ? 'decision' : 'decisions'}` : 'No blockers'}</span>
         <span class="card-arrow">${icon('arrow')}</span>
       </div>
-    </article>
+    </a>
   `;
 }
 
@@ -500,6 +537,11 @@ function renderDocument(document: ParsedDocument): string {
 
 function renderReviewPanel(document: ParsedDocument): string {
   const review = getReview(document.id);
+  const saveLabel = unsavedReviewIds.has(document.id)
+    ? 'Not saved · export still available'
+    : review.updatedAt
+      ? `Saved ${new Date(review.updatedAt).toLocaleString()}`
+      : 'Not saved yet';
   return `
     <section class="review-panel" aria-labelledby="review-title">
       <div class="review-heading">
@@ -520,7 +562,7 @@ function renderReviewPanel(document: ParsedDocument): string {
       <label class="review-note-label" for="review-note">Review note</label>
       <textarea id="review-note" data-review-note="${document.id}" rows="5" placeholder="Capture the decision, concern, or exact wording you would change…">${escapeHtml(review.note)}</textarea>
       <div class="review-note-footer">
-        <span>${review.updatedAt ? `Saved ${new Date(review.updatedAt).toLocaleString()}` : 'Not saved yet'}</span>
+        <span>${escapeHtml(saveLabel)}</span>
         <button data-action="copy-review">${icon('copy')} Copy all review notes</button>
       </div>
     </section>
@@ -728,6 +770,7 @@ function slugify(value: string): string {
 
 
 function openSearch(): void {
+  syncMobileNavigation(false, false);
   const dialog = document.querySelector<HTMLDialogElement>('#search-dialog');
   const input = document.querySelector<HTMLInputElement>('#global-search');
   if (!dialog || !input) return;
@@ -776,9 +819,37 @@ function setReviewStatus(documentId: string, status: ReviewStatus): void {
     ...reviews,
     [documentId]: { ...current, status, updatedAt: new Date().toISOString() },
   };
-  persistReviews();
-  render();
-  showToast(`${documentById.get(documentId)?.shortTitle ?? 'Document'} marked “${statusMeta[status].label}”`);
+  const saved = persistReviews();
+  if (saved) unsavedReviewIds.clear();
+  else unsavedReviewIds.add(documentId);
+  refreshReviewUi(documentId, status, saved);
+  showToast(
+    saved
+      ? `${documentById.get(documentId)?.shortTitle ?? 'Document'} marked “${statusMeta[status].label}”`
+      : 'Review changed but could not be saved; export is still available',
+  );
+}
+function refreshReviewUi(documentId: string, status: ReviewStatus, saved: boolean): void {
+  for (const option of document.querySelectorAll<HTMLButtonElement>('.review-option')) {
+    const selected = option.dataset.status === status;
+    option.classList.toggle('is-selected', selected);
+    option.setAttribute('aria-pressed', String(selected));
+  }
+
+  const navItem = document.querySelector<HTMLElement>(`.nav-item[data-doc="${documentId}"]`);
+  const reviewDot = navItem?.querySelector<HTMLElement>('.review-dot');
+  if (reviewDot) {
+    reviewDot.className = `review-dot ${statusMeta[status].className}`;
+    reviewDot.title = statusMeta[status].label;
+  }
+
+  const progressRing = document.querySelector<HTMLElement>('.progress-ring');
+  progressRing?.style.setProperty('--progress', `${reviewProgress()}%`);
+  const progressLabel = progressRing?.querySelector<HTMLElement>('span');
+  if (progressLabel) progressLabel.textContent = `${reviewedCount()}/${documents.length}`;
+
+  const savedLabel = document.querySelector<HTMLElement>('.review-note-footer span');
+  if (savedLabel) savedLabel.textContent = saved ? 'Saved just now' : 'Not saved · export still available';
 }
 
 function updateReviewNote(documentId: string, note: string): void {
@@ -787,9 +858,11 @@ function updateReviewNote(documentId: string, note: string): void {
     ...reviews,
     [documentId]: { ...current, note, updatedAt: new Date().toISOString() },
   };
-  persistReviews();
+  const saved = persistReviews();
+  if (saved) unsavedReviewIds.clear();
+  else unsavedReviewIds.add(documentId);
   const footer = document.querySelector<HTMLElement>('.review-note-footer span');
-  if (footer) footer.textContent = 'Saved just now';
+  if (footer) footer.textContent = saved ? 'Saved just now' : 'Not saved · export still available';
 }
 
 function buildReviewMarkdown(): string {
@@ -814,8 +887,12 @@ function buildReviewMarkdown(): string {
 }
 
 async function copyReview(): Promise<void> {
-  await copyText(buildReviewMarkdown());
-  showToast('Review summary copied');
+  try {
+    await copyText(buildReviewMarkdown());
+    showToast('Review summary copied');
+  } catch {
+    showToast('Review summary could not be copied');
+  }
 }
 
 function downloadReview(): void {
@@ -844,8 +921,13 @@ async function copyText(value: string): Promise<void> {
   textarea.style.opacity = '0';
   document.body.append(textarea);
   textarea.select();
-  document.execCommand('copy');
-  textarea.remove();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } finally {
+    textarea.remove();
+  }
+  if (!copied) throw new Error('Clipboard copy failed');
 }
 
 function showToast(message: string): void {
@@ -862,10 +944,16 @@ app.addEventListener('click', (event) => {
 
   const documentId = target.dataset.doc;
   if (documentId) {
+    if (
+      target instanceof HTMLAnchorElement &&
+      (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+    ) {
+      return;
+    }
     event.preventDefault();
     const dialog = document.querySelector<HTMLDialogElement>('#search-dialog');
     if (dialog?.open) dialog.close();
-    document.body.classList.remove('menu-open');
+    syncMobileNavigation(false, false);
     navigateTo(documentId, target.dataset.anchor ?? '');
     return;
   }
@@ -877,9 +965,11 @@ app.addEventListener('click', (event) => {
   }
 
   switch (target.dataset.action) {
-    case 'toggle-menu':
-      document.body.classList.toggle('menu-open');
+    case 'toggle-menu': {
+      const opening = !document.body.classList.contains('menu-open');
+      syncMobileNavigation(opening, !opening);
       break;
+    }
     case 'open-search':
       openSearch();
       break;
@@ -893,7 +983,9 @@ app.addEventListener('click', (event) => {
       downloadReview();
       break;
     case 'copy-link':
-      void copyText(window.location.href).then(() => showToast('Page link copied'));
+      void copyText(window.location.href)
+        .then(() => showToast('Page link copied'))
+        .catch(() => showToast('Page link could not be copied'));
       break;
     case 'review-status': {
       const route = currentRoute();
@@ -925,16 +1017,29 @@ app.addEventListener('keydown', (event) => {
     results[(currentIndex + offset + results.length) % results.length]?.focus();
     return;
   }
-  if ((event.key === 'Enter' || event.key === ' ') && target.matches('.document-card, .brand')) {
-    event.preventDefault();
-    const documentId = target.dataset.doc;
-    if (documentId) navigateTo(documentId);
-  }
 });
 
 window.addEventListener('keydown', (event) => {
   const active = document.activeElement;
   const isTyping = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
+  if (event.key === 'Escape' && document.body.classList.contains('menu-open')) {
+    event.preventDefault();
+    syncMobileNavigation(false, true);
+    return;
+  }
+  if (event.key === 'Tab' && document.body.classList.contains('menu-open')) {
+    const focusable = [
+      ...document.querySelectorAll<HTMLElement>('#sidebar-navigation button:not([disabled]), #sidebar-navigation a[href]'),
+    ];
+    if (focusable.length) {
+      event.preventDefault();
+      const currentIndex = focusable.indexOf(active as HTMLElement);
+      const direction = event.shiftKey ? -1 : 1;
+      const nextIndex = currentIndex < 0 ? 0 : (currentIndex + direction + focusable.length) % focusable.length;
+      focusable[nextIndex].focus();
+    }
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     openSearch();
@@ -943,6 +1048,8 @@ window.addEventListener('keydown', (event) => {
     openSearch();
   }
 });
+
+mobileNavigationQuery.addEventListener('change', () => syncMobileNavigation(false, false));
 
 window.addEventListener('popstate', render);
 render();
